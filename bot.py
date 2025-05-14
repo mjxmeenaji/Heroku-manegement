@@ -6,7 +6,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackContext, CallbackQueryHandler
 
 # Logging setup
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 SUPPORT_GROUP = "https://t.me/SFW_BotCore"
@@ -18,8 +19,10 @@ with sqlite3.connect(DB_NAME) as conn:
     conn.execute('''CREATE TABLE IF NOT EXISTS users
                     (user_id INTEGER PRIMARY KEY, api_key TEXT)''')
 
+
 def get_db_connection():
     return sqlite3.connect(DB_NAME)
+
 
 def get_heroku_client(user_id):
     conn = get_db_connection()
@@ -28,6 +31,7 @@ def get_heroku_client(user_id):
     result = c.fetchone()
     conn.close()
     return result[0] if result else None
+
 
 def validate_heroku_key(api_key):
     headers = {
@@ -39,6 +43,7 @@ def validate_heroku_key(api_key):
         return response.status_code == 200
     except:
         return False
+
 
 def heroku_api(user_id, endpoint, method='GET', data=None):
     api_key = get_heroku_client(user_id)
@@ -54,7 +59,7 @@ def heroku_api(user_id, endpoint, method='GET', data=None):
     try:
         response = requests.request(
             method,
-            f'https://api.heroku.com/apps/{endpoint}',
+            f'https://api.heroku.com/{endpoint}',
             headers=headers,
             json=data
         )
@@ -63,32 +68,38 @@ def heroku_api(user_id, endpoint, method='GET', data=None):
         logger.error(f"Heroku API Error: {e}")
         return None
 
+
 def start(update: Update, context: CallbackContext):
     user = update.effective_user
     help_text = f"""
-<b>🌟 Welcome {user.first_name}! 🌟</b>
+<b>✨ Welcome, {user.first_name}!</b>
 
-<b>📖 How to use me:</b>
-1. /setkey - Add Heroku API Key
-2. /apps - List your Heroku apps
-3. /download [appname] - Get app tarball
-4. /download_all - Backup all apps
-5. /restart [appname] - Restart dynos
-6. /restart_all - Nuclear restart
-7. /logs [appname] - Get app logs
-8. /remove_key - Delete stored API Key
+I’m a powerful Heroku Manager Bot built to manage your Heroku apps directly from Telegram.
 
-🔧 <b>Support:</b> <a href="{SUPPORT_GROUP}">SFW BotCore</a>
-👨‍💻 <b>Owner:</b> <a href="tg://user?id={OWNER_ID}">Contact</a>
-    """
+<b>📌 Features:</b>
+• /setkey - Save your Heroku API Key
+• /apps - List all your Heroku apps
+• /download [appname] - Get downloadable tarball
+• /restart [appname] - Restart any app
+• /restart_all - Restart all apps together
+• /logs [appname] - View app logs
+• /remove_key - Delete your API Key
+
+<b>🛡️ Secure:</b> Your API keys are stored privately.
+<b>📞 Support:</b> <a href="{SUPPORT_GROUP}">SFW BotCore</a>
+<b>👤 Owner:</b> <a href="tg://user?id={OWNER_ID}">Click to contact</a>
+
+Start by using /setkey YOUR_HEROKU_API_KEY
+"""
     update.message.reply_text(help_text, parse_mode='HTML', disable_web_page_preview=True)
+
 
 def set_key(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     api_key = ' '.join(context.args)
 
     if not api_key:
-        update.message.reply_text("❌ Please provide API key: /setkey YOUR_HEROKU_API_KEY")
+        update.message.reply_text("❌ Usage: /setkey YOUR_HEROKU_API_KEY")
         return
 
     if not validate_heroku_key(api_key):
@@ -103,12 +114,13 @@ def set_key(update: Update, context: CallbackContext):
 
     update.message.reply_text("✅ API Key Saved Successfully!")
 
+
 def list_apps(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     api_key = get_heroku_client(user_id)
 
     if not api_key:
-        update.message.reply_text("❌ First set your API key using /setkey")
+        update.message.reply_text("❌ Please set your API key using /setkey")
         return
 
     headers = {'Authorization': f'Bearer {api_key}', 'Accept': 'application/vnd.heroku+json; version=3'}
@@ -120,7 +132,7 @@ def list_apps(update: Update, context: CallbackContext):
             if not apps:
                 update.message.reply_text("🚫 No Heroku apps found!")
                 return
-            keyboard = [[InlineKeyboardButton(app['name'], callback_data=f"app_{app['id']}")] for app in apps]
+            keyboard = [[InlineKeyboardButton(app['name'], callback_data=f"app_{app['name']}")] for app in apps]
             reply_markup = InlineKeyboardMarkup(keyboard)
             update.message.reply_text(f"📦 Your Heroku Apps ({len(apps)}):", reply_markup=reply_markup)
         else:
@@ -128,23 +140,25 @@ def list_apps(update: Update, context: CallbackContext):
     except Exception as e:
         update.message.reply_text(f"🔥 API Error: {str(e)}")
 
+
 def restart_app(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if not context.args:
         update.message.reply_text("Usage: /restart [appname]")
         return
     app_name = context.args[0]
-    response = heroku_api(user_id, f"{app_name}/dynos", method='DELETE')
+    response = heroku_api(user_id, f"apps/{app_name}/dynos", method='DELETE')
     if response and response.status_code == 202:
         update.message.reply_text(f"♻️ Restarted app: {app_name}")
     else:
         update.message.reply_text("❌ Failed to restart app.")
 
+
 def restart_all(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     api_key = get_heroku_client(user_id)
     if not api_key:
-        update.message.reply_text("❌ First set your API key using /setkey")
+        update.message.reply_text("❌ Set your API key first using /setkey")
         return
 
     headers = {'Authorization': f'Bearer {api_key}', 'Accept': 'application/vnd.heroku+json; version=3'}
@@ -152,12 +166,12 @@ def restart_all(update: Update, context: CallbackContext):
     if response.status_code == 200:
         count = 0
         for app in response.json():
-            app_name = app["name"]
-            heroku_api(user_id, f"{app_name}/dynos", method="DELETE")
+            heroku_api(user_id, f"apps/{app['name']}/dynos", method="DELETE")
             count += 1
         update.message.reply_text(f"✅ Restarted {count} apps.")
     else:
-        update.message.reply_text("❌ Failed to restart all apps.")
+        update.message.reply_text("❌ Failed to restart apps.")
+
 
 def get_logs(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
@@ -165,31 +179,55 @@ def get_logs(update: Update, context: CallbackContext):
         update.message.reply_text("Usage: /logs [appname]")
         return
     app_name = context.args[0]
-    response = heroku_api(user_id, f"{app_name}/log-sessions", method='POST', data={"lines": 100})
+    response = heroku_api(user_id, f"apps/{app_name}/log-sessions", method='POST', data={"lines": 100})
     if response and response.status_code == 201:
         log_url = response.json()["logplex_url"]
         update.message.reply_text(f"📄 Logs: {log_url}")
     else:
         update.message.reply_text("❌ Failed to get logs.")
 
+
 def download_backup(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if not context.args:
         update.message.reply_text("Usage: /download [appname]")
         return
+
     app_name = context.args[0]
-    url = f"https://api.heroku.com/apps/{app_name}/builds"
     api_key = get_heroku_client(user_id)
+    if not api_key:
+        update.message.reply_text("❌ Set your API key first using /setkey")
+        return
+
     headers = {
-        'Accept': 'application/vnd.heroku+json; version=3',
-        'Authorization': f'Bearer {api_key}',
-        'Content-Type': 'application/json'
+        "Accept": "application/vnd.heroku+json; version=3",
+        "Authorization": f"Bearer {api_key}"
     }
-    response = requests.post(url, headers=headers, json={})
-    if response.status_code == 201:
-        update.message.reply_text("✅ Backup triggered (if supported).")
+
+    # Get slug (latest release)
+    app_info = requests.get(f"https://api.heroku.com/apps/{app_name}/releases", headers=headers)
+    if app_info.status_code != 200:
+        update.message.reply_text("❌ Failed to fetch release info!")
+        return
+
+    releases = app_info.json()
+    if not releases:
+        update.message.reply_text("❌ No releases found!")
+        return
+
+    latest = sorted(releases, key=lambda x: x['version'], reverse=True)[0]
+    slug_id = latest.get("slug", {}).get("id")
+    if not slug_id:
+        update.message.reply_text("❌ Could not find slug for latest release!")
+        return
+
+    slug_info = requests.get(f"https://api.heroku.com/apps/{app_name}/slugs/{slug_id}", headers=headers)
+    if slug_info.status_code == 200:
+        download_url = slug_info.json().get("blob", {}).get("url")
+        update.message.reply_text(f"📦 Download tarball for *{app_name}*:\n{download_url}", parse_mode="Markdown")
     else:
-        update.message.reply_text("❌ Backup failed or not supported.")
+        update.message.reply_text("❌ Failed to get download URL!")
+
 
 def remove_key(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
@@ -200,20 +238,21 @@ def remove_key(update: Update, context: CallbackContext):
     conn.close()
     update.message.reply_text("🗑️ API Key removed!")
 
+
 def button_click(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
 
     if query.data.startswith('app_'):
-        app_id = query.data.split('_')[1]
-        response = heroku_api(query.from_user.id, app_id)
+        app_name = query.data.replace('app_', '')
+        response = heroku_api(query.from_user.id, f"apps/{app_name}")
 
         if response and response.status_code == 200:
             app = response.json()
             message = (
                 f"*{app['name']}*\n"
                 f"🆔 ID: `{app['id']}`\n"
-                f"🌍 Web URL: {app['web_url']}\n"
+                f"🌍 Web URL: {app.get('web_url', 'N/A')}\n"
                 f"⏰ Created: {app['created_at']}\n"
                 f"🔄 Updated: {app['updated_at']}"
             )
@@ -221,13 +260,19 @@ def button_click(update: Update, context: CallbackContext):
         else:
             query.edit_message_text("❌ Failed to fetch app details!")
 
+
 def error_handler(update: Update, context: CallbackContext):
     logger.error(f"Error: {context.error}")
     if update and update.effective_message:
         update.effective_message.reply_text(f"⚠️ Error occurred. Contact support: {SUPPORT_GROUP}")
 
+
 def main():
     TOKEN = os.getenv('TELEGRAM_TOKEN')
+    if not TOKEN:
+        print("❌ TELEGRAM_TOKEN not set!")
+        return
+
     updater = Updater(TOKEN)
     dp = updater.dispatcher
 
@@ -244,6 +289,7 @@ def main():
 
     updater.start_polling()
     updater.idle()
+
 
 if __name__ == '__main__':
     main()
