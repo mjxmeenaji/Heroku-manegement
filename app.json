@@ -18,6 +18,10 @@
     "TELEGRAM_TOKEN": {
       "description": "Your Telegram bot token (from BotFather)",
       "required": true
+    },
+    "LOG_GROUP_ID": {
+      "description": "# Your log group ID",
+      "required": true
     }
   },
   "scripts": {
