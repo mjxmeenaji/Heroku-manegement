@@ -1,19 +1,45 @@
 {
   "name": "Heroku Super Manager",
-  "description": "Advanced Heroku Management Bot with Multi-User Support",
-  "keywords": ["heroku", "telegram", "manager"],
+  "description": "Advanced Telegram Bot for Heroku App Management with Multi-User Support",
+  "keywords": [
+    "heroku", 
+    "telegram",
+    "devops",
+    "management",
+    "automation"
+  ],
+  "website": "https://github.com/Akash8t2/Heroku-manegement",
+  "repository": "https://github.com/Akash8t2/Heroku-manegement",
+  "logo": "https://img.icons8.com/color/480/heroku.png",
+  "success_url": "/",
   "buildpacks": [
-    { "url": "heroku/python" }
+    {
+      "url": "heroku/python"
+    }
   ],
   "env": {
     "TELEGRAM_TOKEN": {
-      "description": "Your Telegram Bot Token from @BotFather"
+      "description": "Telegram Bot Token from @BotFather",
+      "required": true
     }
   },
   "formation": {
     "worker": {
       "quantity": 1,
-      "size": "basic"
+      "size": "basic",
+      "command": "python bot.py"
     }
-  }
+  },
+  "addons": [
+    {
+      "plan": "log-runtime-metrics",
+      "as": "RUNTIME_METRICS"
+    },
+    {
+      "plan": "heroku-postgresql:hobby-dev",
+      "options": {
+        "version": "22"
+      }
+    }
+  ]
 }
