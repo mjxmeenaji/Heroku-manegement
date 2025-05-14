@@ -1,0 +1,19 @@
+{
+  "name": "Heroku Super Manager",
+  "description": "Advanced Heroku Management Bot with Multi-User Support",
+  "keywords": ["heroku", "telegram", "manager"],
+  "buildpacks": [
+    { "url": "heroku/python" }
+  ],
+  "env": {
+    "TELEGRAM_TOKEN": {
+      "description": "Your Telegram Bot Token from @BotFather"
+    }
+  },
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "free"
+    }
+  }
+}
