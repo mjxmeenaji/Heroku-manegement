@@ -7,7 +7,7 @@
 
 A powerful Telegram bot 🤖 for managing Heroku apps with advanced features and secure multi-user support.
 
-[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/Akash8t2/Heroku-manegement)
+[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/mjxmeenaji/Heroku-manegement)
 
 ## 🌟 Features
 
