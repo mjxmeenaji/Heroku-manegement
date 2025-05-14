@@ -41,6 +41,7 @@ export TELEGRAM_TOKEN="your_bot_token"
 export HEROKU_API_KEY="your_heroku_key"
 
 python bot.py
+```
 
 ### Heroku Deployment
 1. Click the [Deploy to Heroku](#) button above
