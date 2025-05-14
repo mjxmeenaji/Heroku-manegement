@@ -1,295 +1,297 @@
 import os
+import re
 import logging
 import sqlite3
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackContext, CallbackQueryHandler
+from telegram.ext import (
+    Updater,
+    CommandHandler,
+    CallbackContext,
+    CallbackQueryHandler,
+    MessageHandler,
+    Filters
+)
 
-# Logging setup
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# Setup
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
+DB_NAME = "heroku_bot.db"
+LOG_GROUP_ID = os.getenv("LOG_GROUP_ID")
 
-SUPPORT_GROUP = "https://t.me/SFW_BotCore"
-OWNER_ID = 5397621246
-DB_NAME = "users.db"
-
-# Initialize DB
+# Database Initialization
 with sqlite3.connect(DB_NAME) as conn:
-    conn.execute('''CREATE TABLE IF NOT EXISTS users
-                    (user_id INTEGER PRIMARY KEY, api_key TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS users 
+                    (user_id INTEGER PRIMARY KEY,
+                     heroku_api_key TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS deployments 
+                    (user_id INTEGER,
+                     step TEXT,
+                     repo_url TEXT,
+                     branch TEXT,
+                     app_name TEXT,
+                     env_vars TEXT,
+                     required_vars TEXT)''')
 
+class HerokuManager:
+    def __init__(self, user_id):
+        self.user_id = user_id
+        self.conn = sqlite3.connect(DB_NAME)
+    
+    def _execute(self, query, params=()):
+        cursor = self.conn.cursor()
+        cursor.execute(query, params)
+        self.conn.commit()
+        return cursor
 
-def get_db_connection():
-    return sqlite3.connect(DB_NAME)
+    # API Key Management
+    def get_api_key(self):
+        cursor = self._execute("SELECT heroku_api_key FROM users WHERE user_id=?", (self.user_id,))
+        result = cursor.fetchone()
+        return result[0] if result else None
+    
+    def set_api_key(self, api_key):
+        self._execute("INSERT OR REPLACE INTO users (user_id, heroku_api_key) VALUES (?, ?)", 
+                     (self.user_id, api_key))
 
+    # Deployment Flow Methods
+    def init_deployment(self):
+        self._execute("INSERT INTO deployments (user_id) VALUES (?)", (self.user_id,))
+    
+    def update_step(self, step):
+        self._execute("UPDATE deployments SET step=? WHERE user_id=?", (step, self.user_id))
+    
+    def save_repo(self, repo_url):
+        self._execute("UPDATE deployments SET repo_url=? WHERE user_id=?", (repo_url, self.user_id))
+    
+    def save_branch(self, branch):
+        self._execute("UPDATE deployments SET branch=? WHERE user_id=?", (branch, self.user_id))
+    
+    def save_app_name(self, app_name):
+        self._execute("UPDATE deployments SET app_name=? WHERE user_id=?", (app_name, self.user_id))
+    
+    def save_required_vars(self, vars_list):
+        self._execute("UPDATE deployments SET required_vars=? WHERE user_id=?", (','.join(vars_list), self.user_id))
+    
+    def add_env_var(self, key, value):
+        env_vars = self.get_env_vars()
+        env_vars[key] = value
+        self._execute("UPDATE deployments SET env_vars=? WHERE user_id=?", (str(env_vars), self.user_id))
+    
+    def get_env_vars(self):
+        cursor = self._execute("SELECT env_vars FROM deployments WHERE user_id=?", (self.user_id,))
+        result = cursor.fetchone()
+        return eval(result[0]) if result and result[0] else {}
+    
+    def get_deployment_data(self):
+        cursor = self._execute("SELECT repo_url, branch, app_name, required_vars FROM deployments WHERE user_id=?", (self.user_id,))
+        data = cursor.fetchone()
+        return {
+            "repo_url": data[0],
+            "branch": data[1],
+            "app_name": data[2],
+            "required_vars": data[3].split(',') if data[3] else []
+        } if data else None
+    
+    def reset_deployment(self):
+        self._execute("DELETE FROM deployments WHERE user_id=?", (self.user_id,))
 
-def get_heroku_client(user_id):
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT api_key FROM users WHERE user_id=?", (user_id,))
-    result = c.fetchone()
-    conn.close()
-    return result[0] if result else None
+# Activity Logger
+def log_activity(context: CallbackContext, user: dict, action: str, details: str = ""):
+    log_message = (
+        f"🛠️ User Activity Log\n\n"
+        f"👤 User: {user['first_name']} (@{user['username']})\n"
+        f"🆔 ID: {user['id']}\n"
+        f"📝 Action: {action}\n"
+        f"🔍 Details: {details}"
+    )
+    context.bot.send_message(chat_id=LOG_GROUP_ID, text=log_message)
 
+# Keyboard Menus
+def main_menu_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔑 Set API Key", callback_data="set_api"),
+         InlineKeyboardButton("📦 My Apps", callback_data="list_apps")],
+        [InlineKeyboardButton("❓ Help", callback_data="help"),
+         InlineKeyboardButton("🚀 New Deployment", callback_data="new_deploy")]
+    ])
 
-def validate_heroku_key(api_key):
+def cancel_keyboard():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel")]])
+
+def branch_keyboard(branches):
+    buttons = [[InlineKeyboardButton(branch, callback_data=f"branch_{branch}")] for branch in branches]
+    buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel")])
+    return InlineKeyboardMarkup(buttons)
+
+# Command Handlers
+def start(update: Update, context: CallbackContext):
+    user = update.effective_user
+    update.message.reply_text(
+        "🤖 **Heroku Deployment Manager**\n"
+        "Choose an option to get started:",
+        reply_markup=main_menu_keyboard(),
+        parse_mode='Markdown'
+    )
+    log_activity(context, user.__dict__, "Bot Started")
+
+# Callback Handlers
+def handle_main_menu(update: Update, context: CallbackContext):
+    query = update.callback_query
+    user = query.from_user
+    query.answer()
+    
+    if query.data == "set_api":
+        query.edit_message_text(
+            "🔑 Send your Heroku API Key:\n"
+            "Get it from https://dashboard.heroku.com/account/applications",
+            reply_markup=cancel_keyboard()
+        )
+        HerokuManager(user.id).update_step("awaiting_api_key")
+    
+    elif query.data == "list_apps":
+        manager = HerokuManager(user.id)
+        api_key = manager.get_api_key()
+        
+        if not api_key:
+            query.edit_message_text("❌ API Key not set! Use /start to set it first.")
+            return
+        
+        headers = {
+            "Accept": "application/vnd.heroku+json; version=3",
+            "Authorization": f"Bearer {api_key}"
+        }
+        
+        try:
+            response = requests.get("https://api.heroku.com/apps", headers=headers)
+            apps = response.json()
+            
+            keyboard = [
+                [InlineKeyboardButton(app['name'], callback_data=f"app_{app['name']}")]
+                for app in apps
+            ]
+            keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="main_menu")])
+            
+            query.edit_message_text(
+                "📦 Your Heroku Applications:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            log_activity(context, user.__dict__, "App List Viewed")
+            
+        except Exception as e:
+            query.edit_message_text(f"❌ Error: {str(e)}")
+    
+    elif query.data == "help":
+        help_text = (
+            "🤖 **Bot Help Guide**\n\n"
+            "🔑 *Set API Key* - Store your Heroku API key\n"
+            "📦 *My Apps* - List existing applications\n"
+            "🚀 *New Deployment* - Deploy new application\n\n"
+            "⚙️ *How to Use:*\n"
+            "1. Set API key first\n"
+            "2. Start new deployment\n"
+            "3. Follow step-by-step instructions\n\n"
+            "🛠️ Support: @YourSupportChannel"
+        )
+        query.edit_message_text(help_text, parse_mode='Markdown')
+    
+    elif query.data == "new_deploy":
+        HerokuManager(user.id).init_deployment()
+        query.edit_message_text(
+            "📥 Send GitHub repository URL:",
+            reply_markup=cancel_keyboard()
+        )
+        log_activity(context, user.__dict__, "New Deployment Started")
+
+# Message Handlers
+def handle_api_key(update: Update, context: CallbackContext):
+    user = update.effective_user
+    manager = HerokuManager(user.id)
+    api_key = update.message.text.strip()
+    
     headers = {
         'Accept': 'application/vnd.heroku+json; version=3',
         'Authorization': f'Bearer {api_key}'
     }
+    
     try:
         response = requests.get('https://api.heroku.com/account', headers=headers)
-        return response.status_code == 200
-    except:
-        return False
-
-
-def heroku_api(user_id, endpoint, method='GET', data=None):
-    api_key = get_heroku_client(user_id)
-    if not api_key:
-        return None
-
-    headers = {
-        'Accept': 'application/vnd.heroku+json; version=3',
-        'Authorization': f'Bearer {api_key}',
-        'Content-Type': 'application/json'
-    }
-
-    try:
-        response = requests.request(
-            method,
-            f'https://api.heroku.com/{endpoint}',
-            headers=headers,
-            json=data
+        if response.status_code != 200:
+            update.message.reply_text("❌ Invalid API Key! Try again:")
+            return
+        
+        manager.set_api_key(api_key)
+        update.message.reply_text(
+            "✅ API Key Verified & Saved!",
+            reply_markup=main_menu_keyboard()
         )
-        return response
+        log_activity(context, user.__dict__, "API Key Set", f"Key: {api_key[:6]}****")
+        
     except Exception as e:
-        logger.error(f"Heroku API Error: {e}")
-        return None
+        update.message.reply_text(f"❌ Error: {str(e)}")
 
-
-def start(update: Update, context: CallbackContext):
+def handle_repo(update: Update, context: CallbackContext):
     user = update.effective_user
-    help_text = f"""
-<b>✨ Welcome, {user.first_name}!</b>
-
-I’m a powerful Heroku Manager Bot built to manage your Heroku apps directly from Telegram.
-
-<b>📌 Features:</b>
-• /setkey - Save your Heroku API Key
-• /apps - List all your Heroku apps
-• /download [appname] - Get downloadable tarball
-• /restart [appname] - Restart any app
-• /restart_all - Restart all apps together
-• /logs [appname] - View app logs
-• /remove_key - Delete your API Key
-
-<b>🛡️ Secure:</b> Your API keys are stored privately.
-<b>📞 Support:</b> <a href="{SUPPORT_GROUP}">SFW BotCore</a>
-<b>👤 Owner:</b> <a href="tg://user?id={OWNER_ID}">Click to contact</a>
-
-Start by using /setkey YOUR_HEROKU_API_KEY
-"""
-    update.message.reply_text(help_text, parse_mode='HTML', disable_web_page_preview=True)
-
-
-def set_key(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    api_key = ' '.join(context.args)
-
-    if not api_key:
-        update.message.reply_text("❌ Usage: /setkey YOUR_HEROKU_API_KEY")
+    manager = HerokuManager(user.id)
+    
+    repo_url = update.message.text
+    if not re.match(r"^https?://github.com/[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+/?$", repo_url):
+        update.message.reply_text("❌ Invalid GitHub URL!", reply_markup=cancel_keyboard())
         return
-
-    if not validate_heroku_key(api_key):
-        update.message.reply_text("❌ Invalid Heroku API Key!")
-        return
-
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO users (user_id, api_key) VALUES (?, ?)", (user_id, api_key))
-    conn.commit()
-    conn.close()
-
-    update.message.reply_text("✅ API Key Saved Successfully!")
-
-
-def list_apps(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    api_key = get_heroku_client(user_id)
-
-    if not api_key:
-        update.message.reply_text("❌ Please set your API key using /setkey")
-        return
-
-    headers = {'Authorization': f'Bearer {api_key}', 'Accept': 'application/vnd.heroku+json; version=3'}
-
+    
+    # Get branches
+    parts = repo_url.replace("https://github.com/", "").split("/")
+    owner, repo = parts[0], parts[1].replace(".git", "")
+    
     try:
-        response = requests.get('https://api.heroku.com/apps', headers=headers)
-        if response.status_code == 200:
-            apps = response.json()
-            if not apps:
-                update.message.reply_text("🚫 No Heroku apps found!")
-                return
-            keyboard = [[InlineKeyboardButton(app['name'], callback_data=f"app_{app['name']}")] for app in apps]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            update.message.reply_text(f"📦 Your Heroku Apps ({len(apps)}):", reply_markup=reply_markup)
-        else:
-            update.message.reply_text(f"❌ Error: {response.text}")
+        response = requests.get(f"https://api.github.com/repos/{owner}/{repo}/branches")
+        branches = [b['name'] for b in response.json()]
+        
+        manager.save_repo(repo_url)
+        manager.update_step("awaiting_branch")
+        
+        update.message.reply_text(
+            "🌿 Select a branch:",
+            reply_markup=branch_keyboard(branches)
+        )
+        log_activity(context, user.__dict__, "Repo Received", repo_url)
+        
     except Exception as e:
-        update.message.reply_text(f"🔥 API Error: {str(e)}")
+        update.message.reply_text(f"❌ Error: {str(e)}")
 
+# ... (Previous deployment flow handlers remain same as last code)
 
-def restart_app(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    if not context.args:
-        update.message.reply_text("Usage: /restart [appname]")
-        return
-    app_name = context.args[0]
-    response = heroku_api(user_id, f"apps/{app_name}/dynos", method='DELETE')
-    if response and response.status_code == 202:
-        update.message.reply_text(f"♻️ Restarted app: {app_name}")
-    else:
-        update.message.reply_text("❌ Failed to restart app.")
-
-
-def restart_all(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    api_key = get_heroku_client(user_id)
-    if not api_key:
-        update.message.reply_text("❌ Set your API key first using /setkey")
-        return
-
-    headers = {'Authorization': f'Bearer {api_key}', 'Accept': 'application/vnd.heroku+json; version=3'}
-    response = requests.get('https://api.heroku.com/apps', headers=headers)
-    if response.status_code == 200:
-        count = 0
-        for app in response.json():
-            heroku_api(user_id, f"apps/{app['name']}/dynos", method="DELETE")
-            count += 1
-        update.message.reply_text(f"✅ Restarted {count} apps.")
-    else:
-        update.message.reply_text("❌ Failed to restart apps.")
-
-
-def get_logs(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    if not context.args:
-        update.message.reply_text("Usage: /logs [appname]")
-        return
-    app_name = context.args[0]
-    response = heroku_api(user_id, f"apps/{app_name}/log-sessions", method='POST', data={"lines": 100})
-    if response and response.status_code == 201:
-        log_url = response.json()["logplex_url"]
-        update.message.reply_text(f"📄 Logs: {log_url}")
-    else:
-        update.message.reply_text("❌ Failed to get logs.")
-
-
-def download_backup(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    if not context.args:
-        update.message.reply_text("Usage: /download [appname]")
-        return
-
-    app_name = context.args[0]
-    api_key = get_heroku_client(user_id)
-    if not api_key:
-        update.message.reply_text("❌ Set your API key first using /setkey")
-        return
-
-    headers = {
-        "Accept": "application/vnd.heroku+json; version=3",
-        "Authorization": f"Bearer {api_key}"
-    }
-
-    # Get slug (latest release)
-    app_info = requests.get(f"https://api.heroku.com/apps/{app_name}/releases", headers=headers)
-    if app_info.status_code != 200:
-        update.message.reply_text("❌ Failed to fetch release info!")
-        return
-
-    releases = app_info.json()
-    if not releases:
-        update.message.reply_text("❌ No releases found!")
-        return
-
-    latest = sorted(releases, key=lambda x: x['version'], reverse=True)[0]
-    slug_id = latest.get("slug", {}).get("id")
-    if not slug_id:
-        update.message.reply_text("❌ Could not find slug for latest release!")
-        return
-
-    slug_info = requests.get(f"https://api.heroku.com/apps/{app_name}/slugs/{slug_id}", headers=headers)
-    if slug_info.status_code == 200:
-        download_url = slug_info.json().get("blob", {}).get("url")
-        update.message.reply_text(f"📦 Download tarball for *{app_name}*:\n{download_url}", parse_mode="Markdown")
-    else:
-        update.message.reply_text("❌ Failed to get download URL!")
-
-
-def remove_key(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("DELETE FROM users WHERE user_id=?", (user_id,))
-    conn.commit()
-    conn.close()
-    update.message.reply_text("🗑️ API Key removed!")
-
-
-def button_click(update: Update, context: CallbackContext):
+def cancel(update: Update, context: CallbackContext):
     query = update.callback_query
-    query.answer()
-
-    if query.data.startswith('app_'):
-        app_name = query.data.replace('app_', '')
-        response = heroku_api(query.from_user.id, f"apps/{app_name}")
-
-        if response and response.status_code == 200:
-            app = response.json()
-            message = (
-                f"*{app['name']}*\n"
-                f"🆔 ID: `{app['id']}`\n"
-                f"🌍 Web URL: {app.get('web_url', 'N/A')}\n"
-                f"⏰ Created: {app['created_at']}\n"
-                f"🔄 Updated: {app['updated_at']}"
-            )
-            query.edit_message_text(text=message, parse_mode='Markdown')
-        else:
-            query.edit_message_text("❌ Failed to fetch app details!")
-
-
-def error_handler(update: Update, context: CallbackContext):
-    logger.error(f"Error: {context.error}")
-    if update and update.effective_message:
-        update.effective_message.reply_text(f"⚠️ Error occurred. Contact support: {SUPPORT_GROUP}")
-
+    user = query.from_user
+    HerokuManager(user.id).reset_deployment()
+    
+    query.edit_message_text(
+        "❌ Operation cancelled",
+        reply_markup=main_menu_keyboard()
+    )
+    log_activity(context, user.__dict__, "Operation Cancelled")
 
 def main():
-    TOKEN = os.getenv('TELEGRAM_TOKEN')
-    if not TOKEN:
-        print("❌ TELEGRAM_TOKEN not set!")
-        return
-
+    TOKEN = os.getenv("TELEGRAM_TOKEN")
+    
     updater = Updater(TOKEN)
     dp = updater.dispatcher
-
+    
+    # Commands
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("setkey", set_key))
-    dp.add_handler(CommandHandler("apps", list_apps))
-    dp.add_handler(CommandHandler("restart", restart_app))
-    dp.add_handler(CommandHandler("restart_all", restart_all))
-    dp.add_handler(CommandHandler("logs", get_logs))
-    dp.add_handler(CommandHandler("download", download_backup))
-    dp.add_handler(CommandHandler("remove_key", remove_key))
-    dp.add_handler(CallbackQueryHandler(button_click))
-    dp.add_error_handler(error_handler)
-
+    
+    # Callbacks
+    dp.add_handler(CallbackQueryHandler(handle_main_menu, pattern="^(set_api|list_apps|help|new_deploy)$"))
+    dp.add_handler(CallbackQueryHandler(handle_branch, pattern="^branch_"))
+    dp.add_handler(CallbackQueryHandler(cancel, pattern="^cancel$"))
+    
+    # Messages
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command & Filters.regex(r'^heroku_.+'), handle_api_key)
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_repo))
+    
     updater.start_polling()
     updater.idle()
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
