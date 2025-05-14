@@ -54,7 +54,7 @@ def heroku_api(user_id, endpoint, method='GET', data=None):
     try:
         response = requests.request(
             method,
-            f'https://api.heroku.com/apps/{endpoint}',
+            f'https://api.heroku.com/{endpoint}',
             headers=headers,
             json=data
         )
@@ -120,7 +120,7 @@ def list_apps(update: Update, context: CallbackContext):
             if not apps:
                 update.message.reply_text("🚫 No Heroku apps found!")
                 return
-            keyboard = [[InlineKeyboardButton(app['name'], callback_data=f"app_{app['id']}")] for app in apps]
+            keyboard = [[InlineKeyboardButton(app['name'], callback_data=f"app_{app['name']}")] for app in apps]
             reply_markup = InlineKeyboardMarkup(keyboard)
             update.message.reply_text(f"📦 Your Heroku Apps ({len(apps)}):", reply_markup=reply_markup)
         else:
@@ -134,7 +134,7 @@ def restart_app(update: Update, context: CallbackContext):
         update.message.reply_text("Usage: /restart [appname]")
         return
     app_name = context.args[0]
-    response = heroku_api(user_id, f"{app_name}/dynos", method='DELETE')
+    response = heroku_api(user_id, f"apps/{app_name}/dynos", method='DELETE')
     if response and response.status_code == 202:
         update.message.reply_text(f"♻️ Restarted app: {app_name}")
     else:
@@ -153,7 +153,7 @@ def restart_all(update: Update, context: CallbackContext):
         count = 0
         for app in response.json():
             app_name = app["name"]
-            heroku_api(user_id, f"{app_name}/dynos", method="DELETE")
+            heroku_api(user_id, f"apps/{app_name}/dynos", method="DELETE")
             count += 1
         update.message.reply_text(f"✅ Restarted {count} apps.")
     else:
@@ -165,7 +165,7 @@ def get_logs(update: Update, context: CallbackContext):
         update.message.reply_text("Usage: /logs [appname]")
         return
     app_name = context.args[0]
-    response = heroku_api(user_id, f"{app_name}/log-sessions", method='POST', data={"lines": 100})
+    response = heroku_api(user_id, f"apps/{app_name}/log-sessions", method='POST', data={"lines": 100})
     if response and response.status_code == 201:
         log_url = response.json()["logplex_url"]
         update.message.reply_text(f"📄 Logs: {log_url}")
@@ -178,15 +178,8 @@ def download_backup(update: Update, context: CallbackContext):
         update.message.reply_text("Usage: /download [appname]")
         return
     app_name = context.args[0]
-    url = f"https://api.heroku.com/apps/{app_name}/builds"
-    api_key = get_heroku_client(user_id)
-    headers = {
-        'Accept': 'application/vnd.heroku+json; version=3',
-        'Authorization': f'Bearer {api_key}',
-        'Content-Type': 'application/json'
-    }
-    response = requests.post(url, headers=headers, json={})
-    if response.status_code == 201:
+    response = heroku_api(user_id, f"apps/{app_name}/builds", method='POST', data={})
+    if response and response.status_code == 201:
         update.message.reply_text("✅ Backup triggered (if supported).")
     else:
         update.message.reply_text("❌ Backup failed or not supported.")
@@ -205,15 +198,15 @@ def button_click(update: Update, context: CallbackContext):
     query.answer()
 
     if query.data.startswith('app_'):
-        app_id = query.data.split('_')[1]
-        response = heroku_api(query.from_user.id, app_id)
+        app_name = query.data.replace('app_', '')
+        response = heroku_api(query.from_user.id, f"apps/{app_name}")
 
         if response and response.status_code == 200:
             app = response.json()
             message = (
                 f"*{app['name']}*\n"
                 f"🆔 ID: `{app['id']}`\n"
-                f"🌍 Web URL: {app['web_url']}\n"
+                f"🌍 Web URL: {app.get('web_url', 'N/A')}\n"
                 f"⏰ Created: {app['created_at']}\n"
                 f"🔄 Updated: {app['updated_at']}"
             )
@@ -228,6 +221,10 @@ def error_handler(update: Update, context: CallbackContext):
 
 def main():
     TOKEN = os.getenv('TELEGRAM_TOKEN')
+    if not TOKEN:
+        print("❌ TELEGRAM_TOKEN not set in environment!")
+        return
+
     updater = Updater(TOKEN)
     dp = updater.dispatcher
 
