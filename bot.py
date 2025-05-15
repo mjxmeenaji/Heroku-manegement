@@ -287,7 +287,7 @@ def main():
     dp.add_handler(CallbackQueryHandler(cancel, pattern="^cancel$"))
     
     # Messages
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command & Filters.regex(r'^heroku_.+'), handle_api_key)
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command & Filters.regex(r'^heroku_.+'), handle_api_key))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_repo))
     
     updater.start_polling()
