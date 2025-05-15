@@ -271,6 +271,9 @@ def cancel(update: Update, context: CallbackContext):
         reply_markup=main_menu_keyboard()
     )
     log_activity(context, user.__dict__, "Operation Cancelled")
+async def handle_branch(update, context):
+    # yahan apni logic likho, jo branch-related callback queries ko handle kare
+    pass
 
 def main():
     TOKEN = os.getenv("TELEGRAM_TOKEN")
